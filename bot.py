@@ -8,6 +8,7 @@ Cara pakai:
 - Cek hari ini: /today atau "pengeluaran hari ini"
 - Cek tanggal tertentu: /date 25 atau "pengeluaran tanggal 25"
 - Cek bulan ini: /month atau "pengeluaran bulan ini"
+- Cek bulan tertentu: /month 12-2025 atau "pengeluaran bulan 12-2025"
 - Hapus entry terakhir: /undo
 """
 
@@ -182,6 +183,15 @@ def format_currency(amount: int) -> str:
     return f"Rp {amount:,}".replace(',', '.')
 
 
+def get_month_name(month: int) -> str:
+    """Get Indonesian month name."""
+    months = [
+        "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+        "Juli", "Agustus", "September", "Oktober", "November", "Desember"
+    ]
+    return months[month - 1]
+
+
 # ==================== HANDLERS ====================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -198,8 +208,9 @@ Halo! Gue bot untuk tracking pengeluaran lo sehari-hari.
 
 *Commands:*
 • /today - Lihat pengeluaran hari ini
-• /date [tanggal] - Lihat pengeluaran tanggal tertentu (misal: /date 7-12-2025)
+• /date [tanggal] - Lihat pengeluaran tanggal tertentu
 • /month - Lihat rekap bulan ini
+• /month [bulan-tahun] - Lihat rekap bulan tertentu (misal: /month 1-2025)
 • /undo - Hapus entry terakhir
 • /help - Bantuan
 
@@ -232,6 +243,8 @@ Langsung ketik apa yang lo beli dan harganya:
 • /date 7-12 - Pengeluaran 7 Desember
 • /date 7-12-2025 - Pengeluaran 7 Des 2025
 • /month - Rekap bulan ini
+• /month 1-2025 - Rekap Januari 2025
+• /month 12-2024 - Rekap Desember 2024
 
 *Lainnya:*
 • /undo - Hapus entry terakhir
@@ -330,7 +343,9 @@ async def date_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     expenses = get_expenses_by_date(user_id, date_str)
     
     if not expenses:
-        await update.message.reply_text(f"📊 Tidak ada pengeluaran di tanggal {day}.")
+        await update.message.reply_text(
+            f"📊 Tidak ada pengeluaran di tanggal {target_date.strftime('%d %B %Y')}."
+        )
         return
     
     total = sum(exp[2] for exp in expenses)
@@ -352,15 +367,70 @@ async def month_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     now = datetime.now()
     
-    daily_totals = get_monthly_expenses(user_id, now.year, now.month)
+    # Kalau ada args, parse bulan-tahun
+    if context.args:
+        try:
+            # Support format: 12-2025 atau 12/2025
+            month_input = context.args[0].replace('/', '-')
+            parts = month_input.split('-')
+            
+            if len(parts) == 2:
+                month = int(parts[0])
+                year = int(parts[1])
+                
+                # Validasi bulan (1-12)
+                if month < 1 or month > 12:
+                    await update.message.reply_text(
+                        "❌ Bulan tidak valid! Bulan harus antara 1-12."
+                    )
+                    return
+                
+                # Handle 2-digit year
+                if year < 100:
+                    year += 2000
+                    
+            elif len(parts) == 1:
+                # Hanya bulan, assume tahun sekarang
+                month = int(parts[0])
+                year = now.year
+                
+                # Validasi bulan
+                if month < 1 or month > 12:
+                    await update.message.reply_text(
+                        "❌ Bulan tidak valid! Bulan harus antara 1-12."
+                    )
+                    return
+            else:
+                raise ValueError("Format salah")
+                
+        except (ValueError, IndexError):
+            await update.message.reply_text(
+                "❌ Format: /month [bulan-tahun]\n\n"
+                "Contoh:\n"
+                "• /month (bulan ini)\n"
+                "• /month 1-2025 (Januari 2025)\n"
+                "• /month 12-2024 (Desember 2024)\n"
+                "• /month 3 (Maret tahun ini)"
+            )
+            return
+    else:
+        # Default: bulan sekarang
+        month = now.month
+        year = now.year
+    
+    daily_totals = get_monthly_expenses(user_id, year, month)
     
     if not daily_totals:
-        await update.message.reply_text("📊 Belum ada pengeluaran bulan ini.")
+        month_name = get_month_name(month)
+        await update.message.reply_text(
+            f"📊 Belum ada pengeluaran di bulan {month_name} {year}."
+        )
         return
     
     grand_total = sum(total for _, total in daily_totals)
+    month_name = get_month_name(month)
     
-    msg = f"📊 *Rekap Bulan {now.strftime('%B %Y')}*\n\n"
+    msg = f"📊 *Rekap Bulan {month_name} {year}*\n\n"
     
     for date_str, total in daily_totals:
         day = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d")
@@ -406,8 +476,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await date_command(update, context)
         return
     
-    # Query for monthly summary
-    if any(phrase in text_lower for phrase in ['bulan ini', 'rekap bulan', 'pengeluaran bulan']):
+    # Query for monthly summary (supports: bulan ini, pengeluaran bulan 1-2025, bulan 12-2024)
+    month_match = re.search(r'(?:pengeluaran\s+)?bulan\s+(?:ini|(\d{1,2}(?:[-/]\d{2,4})?))', text_lower)
+    if month_match:
+        if month_match.group(1):
+            # Ada bulan spesifik
+            context.args = [month_match.group(1)]
+        else:
+            # "bulan ini"
+            context.args = []
         await month_command(update, context)
         return
     
@@ -456,7 +533,7 @@ def main():
     # Bot token - bisa hardcode atau pakai environment variable
     token = os.getenv("TELEGRAM_BOT_TOKEN") or "8578037119:AAHSq4yc6rFPEQZ3sPWHXY7NBwG6PMxNiSk"
     
-    if token == "YOUR_BOT_TOKEN_HERE":
+    if token == "8578037119:AAHSq4yc6rFPEQZ3sPWHXY7NBwG6PMxNiSk":
         print("❌ Error: Token belum diisi!")
         print("Edit bot.py dan ganti YOUR_BOT_TOKEN_HERE dengan token lo")
         print("Atau set: export TELEGRAM_BOT_TOKEN='token_lo'")
