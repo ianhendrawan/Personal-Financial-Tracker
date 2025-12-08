@@ -532,12 +532,7 @@ def main():
     """Main function to run the bot."""
     # Bot token - bisa hardcode atau pakai environment variable
     token = os.getenv("TELEGRAM_BOT_TOKEN") or "8578037119:AAHSq4yc6rFPEQZ3sPWHXY7NBwG6PMxNiSk"
-    
-    if token == "8578037119:AAHSq4yc6rFPEQZ3sPWHXY7NBwG6PMxNiSk":
-        print("❌ Error: Token belum diisi!")
-        print("Edit bot.py dan ganti YOUR_BOT_TOKEN_HERE dengan token lo")
-        print("Atau set: export TELEGRAM_BOT_TOKEN='token_lo'")
-        return
+
     
     # Initialize database
     init_db()
